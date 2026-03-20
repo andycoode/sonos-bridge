@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlin.coroutines.coroutineContext
 import java.io.IOException
 
 /**
@@ -186,7 +187,7 @@ class AudioCaptureService : Service() {
     private suspend fun captureLoop(bufferSize: Int) {
         val buffer = ByteArray(bufferSize)
 
-        while (isActive) {
+        while (coroutineContext.isActive) {
             val bytesRead = audioRecord?.read(buffer, 0, bufferSize) ?: -1
 
             when {
