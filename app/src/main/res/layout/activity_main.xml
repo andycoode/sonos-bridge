@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:padding="32dp"
+    android:background="#FF1A1A2E">
+
+    <!-- Left panel: Controls -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingEnd="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🔊 Sonos Bridge"
+            android:textSize="28sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Press Discover to find Sonos speakers"
+            android:textSize="16sp"
+            android:textColor="#B0B0C0"
+            android:layout_marginBottom="16dp" />
+
+        <Button
+            android:id="@+id/btnDiscover"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Discover Speakers"
+            android:textSize="18sp"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp"
+            android:focusable="true"
+            android:nextFocusDown="@id/btnStartStop" />
+
+        <TextView
+            android:id="@+id/speakerInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No speaker selected"
+            android:textSize="14sp"
+            android:textColor="#8888AA"
+            android:layout_marginBottom="16dp" />
+
+        <Button
+            android:id="@+id/btnStartStop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start Streaming"
+            android:textSize="18sp"
+            android:padding="12dp"
+            android:layout_marginBottom="24dp"
+            android:focusable="true"
+            android:nextFocusUp="@id/btnDiscover"
+            android:nextFocusDown="@id/delaySlider" />
+
+        <!-- Latency calibration section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Latency Compensation"
+            android:textSize="18sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/delayLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Video delay: 1500ms"
+            android:textSize="14sp"
+            android:textColor="#B0B0C0"
+            android:layout_marginBottom="4dp" />
+
+        <SeekBar
+            android:id="@+id/delaySlider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:focusable="true"
+            android:nextFocusUp="@id/btnStartStop"
+            android:nextFocusDown="@id/btnCalibrate" />
+
+        <Button
+            android:id="@+id/btnCalibrate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Run Calibration Test"
+            android:textSize="16sp"
+            android:padding="10dp"
+            android:focusable="true"
+            android:nextFocusUp="@id/delaySlider" />
+
+    </LinearLayout>
+
+    <!-- Right panel: Speaker list -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingStart="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Available Speakers"
+            android:textSize="20sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp" />
+
+        <ListView
+            android:id="@+id/speakerList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#FF16213E"
+            android:divider="#FF0F3460"
+            android:dividerHeight="1dp"
+            android:focusable="true"
+            android:nextFocusLeft="@id/btnDiscover" />
+
+    </LinearLayout>
+
+</LinearLayout>
