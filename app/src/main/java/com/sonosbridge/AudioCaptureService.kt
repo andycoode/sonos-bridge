@@ -66,6 +66,9 @@ class AudioCaptureService : Service() {
             return START_NOT_STICKY
         }
 
+        // Stop any existing server/capture first (in case of restart)
+        stopCapture()
+
         // Create notification channel and start foreground
         createNotificationChannel()
         val notification = buildNotification("Initialising audio capture...")

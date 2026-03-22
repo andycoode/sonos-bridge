@@ -95,6 +95,15 @@ object SonosDiscovery {
     }
 
     /**
+     * Fetch the friendly name of a Sonos speaker by its IP address.
+     * Used for manual IP entry — connects directly to the device description XML.
+     * Returns null if the device is unreachable or not a Sonos speaker.
+     */
+    fun fetchSpeakerName(ip: String): String? {
+        return fetchDeviceName("http://$ip:1400/xml/device_description.xml")
+    }
+
+    /**
      * Parse the LOCATION header from an SSDP response.
      */
     private fun parseLocation(response: String): String? {

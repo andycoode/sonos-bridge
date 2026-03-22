@@ -6,7 +6,7 @@ pluginManagement {
     }
 }
 
-dependencyResolutionManagement  {
+dependencyResolution {
     repositories {
         google()
         mavenCentral()

@@ -17,7 +17,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="🔊 Sonos Bridge"
+            android:text="Sonos Bridge"
             android:textSize="28sp"
             android:textColor="#FFFFFF"
             android:textStyle="bold"
@@ -41,6 +41,18 @@
             android:padding="12dp"
             android:layout_marginBottom="8dp"
             android:focusable="true"
+            android:nextFocusDown="@id/btnManualIp" />
+
+        <Button
+            android:id="@+id/btnManualIp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enter IP Manually"
+            android:textSize="18sp"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp"
+            android:focusable="true"
+            android:nextFocusUp="@id/btnDiscover"
             android:nextFocusDown="@id/btnStartStop" />
 
         <TextView
@@ -61,7 +73,7 @@
             android:padding="12dp"
             android:layout_marginBottom="24dp"
             android:focusable="true"
-            android:nextFocusUp="@id/btnDiscover"
+            android:nextFocusUp="@id/btnManualIp"
             android:nextFocusDown="@id/delaySlider" />
 
         <!-- Latency calibration section -->
