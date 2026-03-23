@@ -162,9 +162,10 @@ class AudioCaptureService : Service() {
             AUDIO_FORMAT
         )
 
-        // Use 2x min buffer - good balance between stability and latency
-        // On Fire Stick this is typically ~3528 bytes = ~20ms of audio
-        val bufferSize = minBufferSize * 2
+        // Use 8x min buffer for stability on budget hardware
+        // Larger buffer = fewer scheduler wakeups = less CPU pressure over time
+        // Trade-off is ~160ms of capture latency, but Sonos adds 500ms+ anyway
+        val bufferSize = minBufferSize * 8
 
         try {
             audioRecord = AudioRecord.Builder()
@@ -202,9 +203,13 @@ class AudioCaptureService : Service() {
      * Main capture loop - reads PCM data from AudioRecord and pushes
      * it to the stream server as fast as it arrives.
      *
-     * No intermediate buffering = minimum added latency.
+     * Runs at elevated thread priority to prevent scheduler starvation
+     * on budget hardware during long sessions.
      */
     private suspend fun captureLoop(bufferSize: Int) {
+        // Elevate thread priority for real-time audio
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+
         val buffer = ByteArray(bufferSize)
 
         while (coroutineContext.isActive) {

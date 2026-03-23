@@ -21,9 +21,10 @@ class AudioStreamServer : NanoHTTPD(PORT) {
         private const val TAG = "StreamServer"
         const val PORT = 8087
 
-        // Ring buffer size: ~2 seconds of CD-quality stereo audio
-        // 44100 samples/sec * 2 channels * 2 bytes/sample * 2 seconds = 352,800 bytes
-        private const val RING_BUFFER_SIZE = 352800
+        // Ring buffer size: ~5 seconds of CD-quality stereo audio
+        // 44100 samples/sec * 2 channels * 2 bytes/sample * 5 seconds = 882,000 bytes
+        // Larger buffer absorbs network hiccups and scheduling jitter on budget hardware
+        private const val RING_BUFFER_SIZE = 882000
     }
 
     private val activeClients = CopyOnWriteArrayList<RingBufferStream>()
