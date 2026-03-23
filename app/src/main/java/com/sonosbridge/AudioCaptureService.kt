@@ -1,14 +1,17 @@
 package com.sonosbridge
 
 import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.*
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlin.coroutines.coroutineContext
@@ -17,11 +20,8 @@ import java.io.IOException
 /**
  * Foreground service that captures system audio using AudioPlaybackCapture API.
  *
- * Key latency optimisations:
- * - Uses smallest possible buffer size for AudioRecord
- * - Streams raw PCM (no encoding overhead)
- * - Writes directly to the HTTP stream server with no intermediate buffering
- * - WAV header declares unknown length so Sonos treats it as a live stream
+ * Includes wake locks to prevent Android from throttling CPU/WiFi during streaming,
+ * which causes gradual audio degradation over time.
  */
 class AudioCaptureService : Service() {
 
@@ -44,6 +44,10 @@ class AudioCaptureService : Service() {
     private var captureJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var videoDelayMs: Long = 1500
+
+    // Wake locks to prevent power saving from killing the stream
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     // Binder for activity binding
     inner class LocalBinder : Binder() {
@@ -92,6 +96,9 @@ class AudioCaptureService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+
+        // Acquire wake locks to prevent Android from throttling CPU/WiFi
+        acquireWakeLocks()
 
         // Start the HTTP stream server FIRST so it's ready for data
         startStreamServer()
@@ -257,6 +264,63 @@ class AudioCaptureService : Service() {
 
         mediaProjection?.stop()
         mediaProjection = null
+
+        releaseWakeLocks()
+    }
+
+    /**
+     * Acquire CPU and WiFi wake locks to prevent Android from
+     * throttling resources during long streaming sessions.
+     * Without these, Android gradually reduces WiFi performance
+     * after ~30-40 minutes, causing audio stuttering.
+     */
+    private fun acquireWakeLocks() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "SonosBridge::AudioCapture"
+            ).apply {
+                acquire()
+            }
+            Log.d(TAG, "CPU wake lock acquired")
+
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wifiManager.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "SonosBridge::AudioStream"
+            ).apply {
+                acquire()
+            }
+            Log.d(TAG, "WiFi high-perf lock acquired")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to acquire wake locks: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Release all wake locks.
+     */
+    private fun releaseWakeLocks() {
+        try {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                    Log.d(TAG, "CPU wake lock released")
+                }
+            }
+            wakeLock = null
+
+            wifiLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                    Log.d(TAG, "WiFi lock released")
+                }
+            }
+            wifiLock = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing wake locks: ${e.message}", e)
+        }
     }
 
     private fun createNotificationChannel() {
