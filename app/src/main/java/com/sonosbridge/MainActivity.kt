@@ -370,8 +370,12 @@ class MainActivity : Activity() {
         updateUI()
 
         // Tell Sonos to start playing our stream
+        // Wait for the capture service to start the HTTP server first
         scope.launch(Dispatchers.IO) {
             try {
+                // Give the service time to start the stream server
+                Thread.sleep(2000)
+
                 val localIp = NetworkUtils.getLocalIpAddress(this@MainActivity)
                 val streamUrl = "http://$localIp:${AudioStreamServer.PORT}/audio.wav"
 

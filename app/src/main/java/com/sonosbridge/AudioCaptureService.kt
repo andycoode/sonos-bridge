@@ -66,8 +66,18 @@ class AudioCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        // Stop any existing server/capture first (in case of restart)
-        stopCapture()
+        // Stop any existing server/audio capture first (in case of restart)
+        captureJob?.cancel()
+        captureJob = null
+        audioRecord?.apply {
+            try { stop(); release() } catch (_: Exception) {}
+        }
+        audioRecord = null
+        streamServer?.apply {
+            closeAllStreams()
+            stop()
+        }
+        streamServer = null
 
         // Create notification channel and start foreground
         createNotificationChannel()
