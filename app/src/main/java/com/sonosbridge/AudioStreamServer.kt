@@ -87,7 +87,7 @@ class AudioStreamServer : NanoHTTPD(PORT) {
 
     /**
      * Called by AudioCaptureService to push captured PCM data to all connected clients.
-     * Hot path — called every ~40ms.
+     * Hot path — called every ~160ms with larger buffers.
      */
     fun pushAudioData(data: ByteArray, length: Int) {
         val deadClients = mutableListOf<RingBufferStream>()
@@ -104,6 +104,20 @@ class AudioStreamServer : NanoHTTPD(PORT) {
             activeClients.removeAll(deadClients.toSet())
             Log.d(TAG, "Cleaned up ${deadClients.size} dead client(s), ${activeClients.size} remaining")
         }
+    }
+
+    /**
+     * Returns true if at least one client (Sonos) is connected and actively reading.
+     */
+    fun hasActiveClients(): Boolean {
+        return activeClients.any { !it.isClosed }
+    }
+
+    /**
+     * Returns the number of connected clients.
+     */
+    fun clientCount(): Int {
+        return activeClients.count { !it.isClosed }
     }
 
     fun closeAllStreams() {

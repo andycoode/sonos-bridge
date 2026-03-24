@@ -20,8 +20,10 @@ import java.io.IOException
 /**
  * Foreground service that captures system audio using AudioPlaybackCapture API.
  *
- * Includes wake locks to prevent Android from throttling CPU/WiFi during streaming,
- * which causes gradual audio degradation over time.
+ * Features:
+ * - Wake locks to prevent CPU/WiFi throttling
+ * - Periodic stream refresh every 25 minutes to prevent drift
+ * - Auto-reconnect watchdog if Sonos disconnects
  */
 class AudioCaptureService : Service() {
 
@@ -30,26 +32,44 @@ class AudioCaptureService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "sonos_bridge_capture"
         private const val NOTIFICATION_ID = 1
 
-        // Audio format - CD quality, good balance of quality vs bandwidth
         const val SAMPLE_RATE = 44100
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_STEREO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         const val CHANNELS = 2
         const val BITS_PER_SAMPLE = 16
+
+        // Refresh the Sonos connection every 25 minutes to prevent drift
+        private const val REFRESH_INTERVAL_MS = 25L * 60 * 1000
+
+        // Check if Sonos is still connected every 15 seconds
+        private const val WATCHDOG_INTERVAL_MS = 15_000L
+
+        // If Sonos hasn't been connected for this long, try reconnecting
+        private const val RECONNECT_AFTER_MS = 30_000L
     }
 
     private var mediaProjection: MediaProjection? = null
     private var audioRecord: AudioRecord? = null
     private var streamServer: AudioStreamServer? = null
     private var captureJob: Job? = null
+    private var watchdogJob: Job? = null
+    private var refreshJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var videoDelayMs: Long = 1500
 
-    // Wake locks to prevent power saving from killing the stream
+    // Sonos connection details (set from MainActivity)
+    private var sonosIp: String? = null
+    private var sonosPort: Int = 1400
+    private var streamUrl: String? = null
+
+    // Tracking for watchdog
+    private var lastClientSeenTime: Long = 0
+    private var isRunning = false
+
+    // Wake locks
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
-    // Binder for activity binding
     inner class LocalBinder : Binder() {
         fun getService(): AudioCaptureService = this@AudioCaptureService
     }
@@ -64,15 +84,21 @@ class AudioCaptureService : Service() {
         val resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
         val projectionData = intent.getParcelableExtra<Intent>("projectionData")
         videoDelayMs = intent.getLongExtra("videoDelay", 1500)
+        sonosIp = intent.getStringExtra("sonosIp")
+        sonosPort = intent.getIntExtra("sonosPort", 1400)
 
         if (resultCode == Activity.RESULT_CANCELED || projectionData == null) {
             stopSelf()
             return START_NOT_STICKY
         }
 
-        // Stop any existing server/audio capture first (in case of restart)
+        // Stop any existing capture first
         captureJob?.cancel()
         captureJob = null
+        watchdogJob?.cancel()
+        watchdogJob = null
+        refreshJob?.cancel()
+        refreshJob = null
         audioRecord?.apply {
             try { stop(); release() } catch (_: Exception) {}
         }
@@ -97,10 +123,10 @@ class AudioCaptureService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Acquire wake locks to prevent Android from throttling CPU/WiFi
+        // Acquire wake locks
         acquireWakeLocks()
 
-        // Start the HTTP stream server FIRST so it's ready for data
+        // Start the HTTP stream server
         startStreamServer()
 
         // Get MediaProjection and start capturing
@@ -116,13 +142,26 @@ class AudioCaptureService : Service() {
 
         startAudioCapture()
 
+        // Calculate stream URL
+        try {
+            val localIp = NetworkUtils.getLocalIpAddress(this)
+            streamUrl = "http://$localIp:${AudioStreamServer.PORT}/audio.wav"
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get local IP", e)
+        }
+
+        isRunning = true
+        lastClientSeenTime = System.currentTimeMillis()
+
+        // Start the watchdog — monitors Sonos connection
+        startWatchdog()
+
+        // Start the periodic refresh — prevents drift
+        startPeriodicRefresh()
+
         return START_NOT_STICKY
     }
 
-    /**
-     * Start the NanoHTTPD-based audio stream server.
-     * Sonos will connect to this to receive the live audio.
-     */
     private fun startStreamServer() {
         try {
             streamServer = AudioStreamServer()
@@ -133,16 +172,9 @@ class AudioCaptureService : Service() {
         }
     }
 
-    /**
-     * Set up AudioRecord with AudioPlaybackCapture configuration.
-     *
-     * This is the magic bit - AudioPlaybackCapture lets us tap into
-     * other apps' audio output at the system mixer level.
-     */
     private fun startAudioCapture() {
         val projection = mediaProjection ?: return
 
-        // Configure playback capture - grab all audio usage types
         val captureConfig = AudioPlaybackCaptureConfiguration.Builder(projection)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
@@ -155,16 +187,12 @@ class AudioCaptureService : Service() {
             .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
             .build()
 
-        // Use minimum buffer size for lowest latency
         val minBufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             CHANNEL_CONFIG,
             AUDIO_FORMAT
         )
 
-        // Use 8x min buffer for stability on budget hardware
-        // Larger buffer = fewer scheduler wakeups = less CPU pressure over time
-        // Trade-off is ~160ms of capture latency, but Sonos adds 500ms+ anyway
         val bufferSize = minBufferSize * 8
 
         try {
@@ -185,7 +213,6 @@ class AudioCaptureService : Service() {
 
             updateNotification("Streaming audio to Sonos")
 
-            // Start the capture loop in a coroutine
             captureJob = scope.launch {
                 captureLoop(bufferSize)
             }
@@ -199,15 +226,7 @@ class AudioCaptureService : Service() {
         }
     }
 
-    /**
-     * Main capture loop - reads PCM data from AudioRecord and pushes
-     * it to the stream server as fast as it arrives.
-     *
-     * Runs at elevated thread priority to prevent scheduler starvation
-     * on budget hardware during long sessions.
-     */
     private suspend fun captureLoop(bufferSize: Int) {
-        // Elevate thread priority for real-time audio
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
 
         val buffer = ByteArray(bufferSize)
@@ -217,8 +236,12 @@ class AudioCaptureService : Service() {
 
             when {
                 bytesRead > 0 -> {
-                    // Push raw PCM data directly to the HTTP stream server
                     streamServer?.pushAudioData(buffer, bytesRead)
+
+                    // Track that we're actively pushing data
+                    if (streamServer?.hasActiveClients() == true) {
+                        lastClientSeenTime = System.currentTimeMillis()
+                    }
                 }
                 bytesRead == AudioRecord.ERROR_INVALID_OPERATION -> {
                     Log.e(TAG, "AudioRecord: invalid operation")
@@ -238,18 +261,103 @@ class AudioCaptureService : Service() {
         Log.d(TAG, "Capture loop ended")
     }
 
+    /**
+     * Watchdog: checks every 15 seconds if the Sonos is still connected.
+     * If no client has been seen for 30 seconds, re-sends the play command.
+     */
+    private fun startWatchdog() {
+        watchdogJob = scope.launch {
+            // Give initial connection time to establish
+            delay(RECONNECT_AFTER_MS)
+
+            while (isActive && isRunning) {
+                delay(WATCHDOG_INTERVAL_MS)
+
+                val ip = sonosIp ?: continue
+                val url = streamUrl ?: continue
+
+                val timeSinceLastClient = System.currentTimeMillis() - lastClientSeenTime
+
+                if (timeSinceLastClient > RECONNECT_AFTER_MS) {
+                    Log.w(TAG, "Watchdog: No client for ${timeSinceLastClient}ms — reconnecting Sonos")
+                    updateNotification("Reconnecting to Sonos...")
+
+                    try {
+                        val speaker = SonosController.SonosSpeaker(name = "Sonos", ip = ip, port = sonosPort)
+                        SonosController.play(speaker, url)
+                        lastClientSeenTime = System.currentTimeMillis()
+                        Log.d(TAG, "Watchdog: Reconnect command sent")
+                        updateNotification("Streaming audio to Sonos")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Watchdog: Reconnect failed: ${e.message}")
+                        updateNotification("Reconnect failed — retrying...")
+                    }
+                } else {
+                    val clients = streamServer?.clientCount() ?: 0
+                    Log.d(TAG, "Watchdog: OK — $clients client(s), last seen ${timeSinceLastClient}ms ago")
+                }
+            }
+        }
+    }
+
+    /**
+     * Periodic refresh: every 25 minutes, tell the Sonos to stop and restart
+     * playback. This resets any accumulated timing drift in the stream.
+     * Results in ~2-3 seconds of silence during the refresh.
+     */
+    private fun startPeriodicRefresh() {
+        refreshJob = scope.launch {
+            while (isActive && isRunning) {
+                delay(REFRESH_INTERVAL_MS)
+
+                val ip = sonosIp ?: continue
+                val url = streamUrl ?: continue
+
+                Log.d(TAG, "Periodic refresh: resetting Sonos stream")
+                updateNotification("Refreshing stream...")
+
+                try {
+                    val speaker = SonosController.SonosSpeaker(name = "Sonos", ip = ip, port = sonosPort)
+
+                    // Stop current playback
+                    try { SonosController.stop(speaker) } catch (_: Exception) {}
+
+                    // Clear the ring buffer so Sonos gets fresh audio
+                    streamServer?.closeAllStreams()
+
+                    // Brief pause to let Sonos process the stop
+                    delay(1500)
+
+                    // Restart playback
+                    SonosController.play(speaker, url)
+                    lastClientSeenTime = System.currentTimeMillis()
+
+                    Log.d(TAG, "Periodic refresh: stream restarted")
+                    updateNotification("Streaming audio to Sonos")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Periodic refresh failed: ${e.message}")
+                    updateNotification("Refresh failed — watchdog will retry")
+                }
+            }
+        }
+    }
+
     fun setVideoDelay(delayMs: Long) {
         videoDelayMs = delayMs
         Log.d(TAG, "Video delay set to ${delayMs}ms")
     }
 
     fun startCalibration() {
-        // TODO: Play a beep tone through the stream and show a visual flash
-        // User adjusts delay slider until the beep and flash align
         Log.d(TAG, "Calibration started")
     }
 
     private fun stopCapture() {
+        isRunning = false
+
+        watchdogJob?.cancel()
+        watchdogJob = null
+        refreshJob?.cancel()
+        refreshJob = null
         captureJob?.cancel()
         captureJob = null
 
@@ -273,12 +381,6 @@ class AudioCaptureService : Service() {
         releaseWakeLocks()
     }
 
-    /**
-     * Acquire CPU and WiFi wake locks to prevent Android from
-     * throttling resources during long streaming sessions.
-     * Without these, Android gradually reduces WiFi performance
-     * after ~30-40 minutes, causing audio stuttering.
-     */
     private fun acquireWakeLocks() {
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -303,9 +405,6 @@ class AudioCaptureService : Service() {
         }
     }
 
-    /**
-     * Release all wake locks.
-     */
     private fun releaseWakeLocks() {
         try {
             wakeLock?.let {
@@ -333,7 +432,7 @@ class AudioCaptureService : Service() {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 "Sonos Audio Bridge",
-                NotificationManager.IMPORTANCE_LOW  // Low = no sound, just shows in tray
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Shows when audio is being streamed to Sonos"
             }
