@@ -193,7 +193,7 @@ class AudioCaptureService : Service() {
             AUDIO_FORMAT
         )
 
-        val bufferSize = minBufferSize * 8
+        val bufferSize = minBufferSize * 4
 
         try {
             audioRecord = AudioRecord.Builder()
