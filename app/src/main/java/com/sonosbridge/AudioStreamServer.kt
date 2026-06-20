@@ -21,10 +21,17 @@ class AudioStreamServer : NanoHTTPD(PORT) {
         private const val TAG = "StreamServer"
         const val PORT = 8087
 
-        // Ring buffer size: ~5 seconds of CD-quality stereo audio
-        // 44100 samples/sec * 2 channels * 2 bytes/sample * 5 seconds = 882,000 bytes
-        // Larger buffer absorbs network hiccups and scheduling jitter on budget hardware
-        private const val RING_BUFFER_SIZE = 882000
+        // Ring buffer size: ~2 seconds of CD-quality stereo audio
+        // 44100 samples/sec * 2 channels * 2 bytes/sample * 2 seconds = 352,800 bytes
+        //
+        // This buffer sits IN FRONT of Sonos's own (uncontrollable) buffer, so every
+        // byte of capacity here is potential added latency: when the Fire Stick's
+        // capture clock runs ahead of Sonos's playback clock, the buffer fills and then
+        // sits full, and that fullness IS the lag you hear. At 5 seconds it added several
+        // seconds of audible delay that grew over a session. 2 seconds still absorbs WiFi
+        // jitter and scheduling hiccups on budget hardware while keeping worst-case added
+        // latency low; the 25-minute refresh clears any residual drift.
+        private const val RING_BUFFER_SIZE = 352800
     }
 
     private val activeClients = CopyOnWriteArrayList<RingBufferStream>()
