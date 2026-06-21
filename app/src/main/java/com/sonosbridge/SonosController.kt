@@ -77,16 +77,26 @@ object SonosController {
 
     /**
      * Set the audio source URI on the Sonos speaker.
-     * Uses plain HTTP URL with minimal metadata.
+     *
+     * Critically, we send DIDL-Lite metadata declaring the stream as
+     * `object.item.audioItem.audioBroadcast` (a LIVE broadcast). Without this, Sonos
+     * treats the WAV as a downloadable file and buffers it aggressively — seconds of
+     * latency that only grow as the capture/playback clocks drift apart. Declaring it
+     * a broadcast switches Sonos into continuous live-stream mode with much smaller
+     * internal buffers, which is what keeps the audio close to real-time.
      */
     private fun setAVTransportURI(speaker: SonosSpeaker, streamUrl: String) {
+        // DIDL-Lite document describing the stream. This is itself XML, so it must be
+        // XML-escaped before being embedded as the text of <CurrentURIMetaData>.
+        val didl = """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/"><item id="sonos-bridge-live" parentID="-1" restricted="true"><dc:title>Sonos Bridge Live</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">RINCON_AssociatedZPUDN</desc></item></DIDL-Lite>"""
+
         val setUriBody = """<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
 <s:Body>
 <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
 <InstanceID>0</InstanceID>
-<CurrentURI>${streamUrl}</CurrentURI>
-<CurrentURIMetaData></CurrentURIMetaData>
+<CurrentURI>${xmlEscape(streamUrl)}</CurrentURI>
+<CurrentURIMetaData>${xmlEscape(didl)}</CurrentURIMetaData>
 </u:SetAVTransportURI>
 </s:Body>
 </s:Envelope>"""
@@ -98,8 +108,19 @@ object SonosController {
             setUriBody
         )
 
-        Log.d(TAG, "Set URI: $streamUrl on ${speaker.name}")
+        Log.d(TAG, "Set URI (live broadcast): $streamUrl on ${speaker.name}")
     }
+
+    /**
+     * Escape a string so it is safe to embed as XML text content.
+     * `&` must be replaced first so we don't double-escape the others.
+     */
+    private fun xmlEscape(s: String): String = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&apos;")
 
     /**
      * Set volume on the Sonos speaker (0-100).
